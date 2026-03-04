@@ -573,8 +573,8 @@ def create_excel_report(teacher_name, nam_hoc, hoc_ky, week_num, start_date, end
 
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
-st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide")
-st.title("🎓 Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
+st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
 
 st.subheader("1. Nguồn dữ liệu nhà trường")
 up_tkb = st.file_uploader("📁 Tải lên file TKB toàn trường (CSV/Excel)", type=["csv", "xlsx", "xls"])
@@ -821,17 +821,19 @@ if up_tkb:
                         st.rerun()
 
                 st.info(
-                    "💡 Bảng dưới đây đã được nâng cấp thành các **Menu xổ xuống**. Việc chọn Tiết PPCT và Loại tiết sẽ diễn ra cực kỳ nhanh chóng. Tên bài sẽ tự động nhảy theo ngay lập tức.")
+                    "💡 Bảng dưới đây đã được nâng cấp thành các **Menu xổ xuống**. Việc chọn Tiết PPCT và Loại tiết sẽ diễn ra cực kỳ nhanh chóng. Tên bài sẽ tự động nhảy theo ngay lập tức. Nhấn nút ❌ để xóa tiết dạy nghỉ lễ.")
 
                 st.markdown("---")
-                header_cols = st.columns([2.5, 1.5, 4, 2.5])
+                header_cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
                 header_cols[0].markdown("**Lớp - Môn (Thời gian)**")
                 header_cols[1].markdown("**Tiết PPCT**")
                 header_cols[2].markdown("**Tên Bài / Nội dung**")
                 header_cols[3].markdown("**Loại Tiết**")
+                header_cols[4].markdown("**Xóa**")
 
+                idx_to_remove = None
                 for i, row in enumerate(st.session_state.report_data):
-                    cols = st.columns([2.5, 1.5, 4, 2.5])
+                    cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
 
                     # Cột 1: Thông tin tĩnh
                     thu_buoi = f"{row['Thứ']}, {row['Buổi']} (T{row['Tiết']})"
@@ -885,6 +887,15 @@ if up_tkb:
 
                     if new_loai != current_loai:
                         st.session_state.report_data[i]['Loại Tiết'] = new_loai
+
+                    # Cột 5: Nút xóa
+                    if cols[4].button("❌", key=f"del_{i}", help="Xóa tiết này"):
+                        idx_to_remove = i
+
+                # Thực hiện xóa nếu có tiết được chọn
+                if idx_to_remove is not None:
+                    st.session_state.report_data.pop(idx_to_remove)
+                    st.rerun()
 
                 missing_ppct = any("⚠️" in str(row["Tên Bài"]) for row in st.session_state.report_data)
                 if missing_ppct:
