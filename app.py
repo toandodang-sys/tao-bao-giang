@@ -574,7 +574,7 @@ def create_excel_report(teacher_name, nam_hoc, hoc_ky, week_num, start_date, end
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
-st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy Trường THCS Ba Tơ")
 
 st.subheader("1. Nguồn dữ liệu nhà trường")
 up_tkb = st.file_uploader("📁 Tải lên file TKB toàn trường (CSV/Excel)", type=["csv", "xlsx", "xls"])
