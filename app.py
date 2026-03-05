@@ -70,18 +70,21 @@ def parse_school_tkb(df):
 
 
 def load_saved_tkb():
-    """Tự động tìm và tải file TKB trực tiếp từ thư mục mã nguồn (GitHub)"""
-    for ext in ['xlsx', 'xls', 'csv']:
-        filename = f"tkb_truong.{ext}"
-        if os.path.exists(filename):
+    """Tự động tìm và tải file TKB trực tiếp từ thư mục mã nguồn (GitHub) không phân biệt hoa/thường"""
+    valid_names = ['tkb_truong.xlsx', 'tkb_truong.xls', 'tkb_truong.csv']
+
+    # Quét toàn bộ file trong thư mục hiện tại
+    for file in os.listdir():
+        # Chuyển tên file về chữ thường để so sánh (VD: TKB_Truong.XLSX -> tkb_truong.xlsx)
+        if file.lower() in valid_names:
             try:
-                if ext == 'csv':
-                    df = pd.read_csv(filename, header=None)
+                if file.lower().endswith('.csv'):
+                    df = pd.read_csv(file, header=None)
                 else:
-                    df = pd.read_excel(filename, header=None)
+                    df = pd.read_excel(file, header=None)
                 return parse_school_tkb(df)
             except Exception as e:
-                st.error(f"Lỗi đọc file {filename}: {e}")
+                st.error(f"Lỗi đọc file {file}: {e}")
                 return None
     return None
 
@@ -604,7 +607,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
-st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy Trường THCS Ba Tơ")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
 
 # Tự động đọc TKB từ thư mục GitHub (Không cần Admin up)
 teachers_dict = load_saved_tkb()
@@ -783,6 +786,11 @@ else:
 
                 st.session_state.report_data = final_report_data
 
+                # QUAN TRỌNG: Dọn dẹp key bộ nhớ giao diện cũ để ngăn lỗi Session State
+                for k in list(st.session_state.keys()):
+                    if k.startswith(("tiet_", "bai_", "loai_", "del_")):
+                        del st.session_state[k]
+
         if st.session_state.report_data:
             st.markdown(f"### 📋 Xem trước Báo Cáo (Tuần {selected_week})")
 
@@ -808,7 +816,7 @@ else:
 
                 # Tự động nhảy Tên bài dựa trên Tiết PPCT
                 auto_ten_bai = ""
-                if add_tiet_ppct > 0 and st.session_state.df_ppct is not None:
+                if add_tiet_ppct > 0 and st.session_state.get('df_ppct') is not None:
                     match_khoi = re.search(r'\d+', add_lop)
                     khoi = match_khoi.group() if match_khoi else add_lop
                     mon_clean = str(add_mon).lower().strip()
@@ -843,6 +851,11 @@ else:
                         buoi_map.get(x['Buổi'], 3),
                         int(x['Tiết']) if str(x['Tiết']).isdigit() else 99
                     ))
+
+                    # QUAN TRỌNG: Dọn dẹp key bộ nhớ giao diện cũ do thứ tự dòng thay đổi
+                    for k in list(st.session_state.keys()):
+                        if k.startswith(("tiet_", "bai_", "loai_", "del_")):
+                            del st.session_state[k]
 
                     st.rerun()
 
@@ -882,18 +895,33 @@ else:
                                              key=f"tiet_{i}", label_visibility="collapsed")
 
                 # Cập nhật Tên Bài ngay nếu Tiết PPCT thay đổi
-                display_bai = str(row['Tên Bài'])
                 if new_tiet != current_tiet:
                     st.session_state.report_data[i]['Tiết PPCT'] = new_tiet
-                    khoi = row['Khối']
-                    mon_clean = str(row['Môn']).lower().strip()
+                    khoi = row.get('Khối', '')
+                    mon_clean = str(row.get('Môn', '')).lower().strip()
 
-                    display_bai = find_lesson_name(st.session_state.df_ppct, khoi, new_tiet, mon_clean)
-                    st.session_state.report_data[i]['Tên Bài'] = display_bai
+                    if st.session_state.get('df_ppct') is not None:
+                        new_lesson_name = find_lesson_name(st.session_state.df_ppct, khoi, new_tiet, mon_clean)
+                    else:
+                        new_lesson_name = ""
 
-                # Cột 3: Tên bài (Cho phép gõ chữ nếu muốn tự sửa tay)
-                new_bai = cols[2].text_input("Tên Bài", value=display_bai, key=f"bai_{i}", label_visibility="collapsed")
-                if new_bai != display_bai:
+                    # Lưu vào kho dữ liệu chính
+                    st.session_state.report_data[i]['Tên Bài'] = new_lesson_name
+
+                    # QUAN TRỌNG: Ghi đè trạng thái của ô nhập Tên Bài để nó thay đổi lập tức trên giao diện
+                    st.session_state[f"bai_{i}"] = new_lesson_name
+
+                    # Bắt buộc tải lại trang ngay lập tức
+                    st.rerun()
+
+                # Cột 3: Tên bài
+                # Chú ý: BỎ THAM SỐ `value=` ĐỂ TRÁNH LỖI CẢNH BÁO SESSION STATE CỦA STREAMLIT
+                if f"bai_{i}" not in st.session_state:
+                    st.session_state[f"bai_{i}"] = str(row.get('Tên Bài', ''))
+
+                new_bai = cols[2].text_input("Tên Bài", key=f"bai_{i}", label_visibility="collapsed")
+
+                if new_bai != str(row.get('Tên Bài', '')):
                     st.session_state.report_data[i]['Tên Bài'] = new_bai
 
                 # Cột 4: Loại Tiết
@@ -919,6 +947,11 @@ else:
             # Thực hiện xóa nếu có tiết được chọn
             if idx_to_remove is not None:
                 st.session_state.report_data.pop(idx_to_remove)
+
+                # QUAN TRỌNG: Dọn dẹp key bộ nhớ giao diện cũ do thứ tự dòng thay đổi
+                for k in list(st.session_state.keys()):
+                    if k.startswith(("tiet_", "bai_", "loai_", "del_")):
+                        del st.session_state[k]
                 st.rerun()
 
             missing_ppct = any("⚠️" in str(row["Tên Bài"]) for row in st.session_state.report_data)
