@@ -607,7 +607,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
-st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy Trường THCS Ba Tơ")
 
 # Tự động đọc TKB từ thư mục GitHub (Không cần Admin up)
 teachers_dict = load_saved_tkb()
