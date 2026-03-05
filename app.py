@@ -3,26 +3,12 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.worksheet.page import PageMargins
-import json
 import os
 import re
 from datetime import datetime, timedelta
 
-# --- 1. CẤU HÌNH HỆ THỐNG ---
-FILE_TRACKER = "tien_do_day.json"
 
-
-def load_tracker():
-    if os.path.exists(FILE_TRACKER):
-        with open(FILE_TRACKER, 'r', encoding='utf-8') as f: return json.load(f)
-    return {}
-
-
-def save_tracker(data):
-    with open(FILE_TRACKER, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=4)
-
-
-# --- 2. LOGIC LÀM SẠCH FILE PPCT (Tránh lỗi dòng thừa) ---
+# --- 1. LOGIC LÀM SẠCH FILE PPCT (Tránh lỗi dòng thừa) ---
 def clean_ppct_dataframe(df):
     cols_str = " ".join([str(c).lower() for c in df.columns])
     if 'tiết' in cols_str and ('bài' in cols_str or 'nội dung' in cols_str):
@@ -37,7 +23,7 @@ def clean_ppct_dataframe(df):
     return df
 
 
-# --- 3. LOGIC ĐỌC TKB TOÀN TRƯỜNG ---
+# --- 2. LOGIC ĐỌC TKB TỪ GITHUB ---
 def parse_school_tkb(df):
     teachers_tkb = {}
     current_teacher = None
@@ -83,7 +69,24 @@ def parse_school_tkb(df):
     return teachers_tkb
 
 
-# --- HÀM TÌM TÊN BÀI TỪ PPCT ---
+def load_saved_tkb():
+    """Tự động tìm và tải file TKB trực tiếp từ thư mục mã nguồn (GitHub)"""
+    for ext in ['xlsx', 'xls', 'csv']:
+        filename = f"tkb_truong.{ext}"
+        if os.path.exists(filename):
+            try:
+                if ext == 'csv':
+                    df = pd.read_csv(filename, header=None)
+                else:
+                    df = pd.read_excel(filename, header=None)
+                return parse_school_tkb(df)
+            except Exception as e:
+                st.error(f"Lỗi đọc file {filename}: {e}")
+                return None
+    return None
+
+
+# --- 3. HÀM TÌM TÊN BÀI TỪ PPCT ---
 def find_lesson_name(df_ppct, khoi, tiet_ppct, mon_tkb_clean):
     """Hàm hỗ trợ tìm tên bài dựa vào Khối, Tiết và Môn đã được chuẩn hóa"""
     try:
@@ -132,8 +135,8 @@ def number_to_words_vn(n):
 
 
 # --- 4. LOGIC TẠO FILE EXCEL BÁO CÁO ---
-def create_excel_report(teacher_name, nam_hoc, hoc_ky, week_num, start_date, end_date, loai_kiem_nhiem, kiem_nhiem,
-                        loai_kiem_nhiem_2, kiem_nhiem_2, report_data):
+def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, week_num, start_date, end_date,
+                        loai_kiem_nhiem, kiem_nhiem, loai_kiem_nhiem_2, kiem_nhiem_2, report_data):
     output_path = f"Bao_Cao_Tuan_{week_num}_{teacher_name.replace(' ', '_')}.xlsx"
 
     wb = openpyxl.Workbook()
@@ -196,12 +199,39 @@ def create_excel_report(teacher_name, nam_hoc, hoc_ky, week_num, start_date, end
 
     # ---------------- THÔNG TIN GIÁO VIÊN ĐỘNG ----------------
     ws.merge_cells('C6:N6')
-    ws['C6'] = f"Họ và tên: {teacher_name}, Chức vụ: Giáo viên; Tổ CM: ............................"
+    ws['C6'] = f"Họ và tên: {teacher_name}, Chức vụ: {chuc_vu}; Tổ CM: {to_chuyen_mon}."
     ws['C6'].font = font_bold
 
     ws.merge_cells('C7:N7')
-    ws[
-        'C7'] = "Dạy môn, lớp: ......................................................................................................."
+
+    # Logic tính toán Tự động lấy Môn và Lớp dạy (loại trừ Chào cờ, SHL)
+    subject_class_map = {}
+    for item in report_data:
+        mon_tkb = str(item.get('Môn', '')).strip()
+        lop_tkb = str(item.get('Lớp', '')).strip()
+        mon_lower = mon_tkb.lower()
+
+        # Loại trừ môn Chào cờ và SHL/Sinh hoạt lớp
+        if 'chào cờ' in mon_lower or 'shl' in mon_lower or 'sinh hoạt' in mon_lower:
+            continue
+
+        if mon_tkb and lop_tkb:
+            if mon_tkb not in subject_class_map:
+                subject_class_map[mon_tkb] = set()
+            subject_class_map[mon_tkb].add(lop_tkb)
+
+    day_mon_str_parts = []
+    for m, l_set in subject_class_map.items():
+        # Sắp xếp tên lớp cho đẹp (VD: 6A1, 6A2)
+        sorted_lops = sorted(list(l_set))
+        day_mon_str_parts.append(f"{m} lớp {', '.join(sorted_lops)}")
+
+    if day_mon_str_parts:
+        ws['C7'] = f"Dạy môn, lớp: {'; '.join(day_mon_str_parts)}"
+    else:
+        ws[
+            'C7'] = "Dạy môn, lớp: ......................................................................................................."
+
     ws['C7'].font = font_normal
 
     ws.merge_cells('C8:N8')
@@ -574,350 +604,341 @@ def create_excel_report(teacher_name, nam_hoc, hoc_ky, week_num, start_date, end
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
-st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy Trường THCS Ba Tơ")
 
-st.subheader("1. Nguồn dữ liệu nhà trường")
-up_tkb = st.file_uploader("📁 Tải lên file TKB toàn trường (CSV/Excel)", type=["csv", "xlsx", "xls"])
+# Tự động đọc TKB từ thư mục GitHub (Không cần Admin up)
+teachers_dict = load_saved_tkb()
 
-if up_tkb:
-    try:
-        if up_tkb.name.endswith('.csv'):
-            df_tkb_full = pd.read_csv(up_tkb, header=None)
-        else:
-            df_tkb_full = pd.read_excel(up_tkb, header=None)
+if not teachers_dict:
+    st.info(
+        "👋 Hệ thống chưa tìm thấy dữ liệu Thời khóa biểu. Quản trị viên vui lòng tải file TKB lên GitHub và đặt tên là 'tkb_truong.xlsx' hoặc 'tkb_truong.csv' để bắt đầu sử dụng.")
+else:
+    list_gv = list(teachers_dict.keys())
 
-        teachers_dict = parse_school_tkb(df_tkb_full)
-        list_gv = list(teachers_dict.keys())
+    # Trích xuất danh sách Lớp và Môn tự động từ TKB toàn trường
+    all_lops = set()
+    all_mons = set()
+    for gv, lessons in teachers_dict.items():
+        for ls in lessons:
+            all_lops.add(str(ls['Lớp']))
+            all_mons.add(str(ls['Môn']))
+    list_all_lops = sorted(list(all_lops)) if all_lops else ["6A1", "7A1", "8A1", "9A1"]
+    list_all_mons = sorted(list(all_mons)) if all_mons else ["Tin học", "Toán", "Ngữ văn"]
 
-        # Trích xuất danh sách Lớp và Môn tự động từ TKB toàn trường
-        all_lops = set()
-        all_mons = set()
-        for gv, lessons in teachers_dict.items():
-            for ls in lessons:
-                all_lops.add(str(ls['Lớp']))
-                all_mons.add(str(ls['Môn']))
-        list_all_lops = sorted(list(all_lops)) if all_lops else ["6A1", "7A1", "8A1", "9A1"]
-        list_all_mons = sorted(list(all_mons)) if all_mons else ["Tin học", "Toán", "Ngữ văn"]
+    st.success(f"✅ Đã tải thành công TKB của **{len(list_gv)}** giáo viên trực tiếp từ hệ thống.")
 
-        st.success(f"✅ Đã đọc thành công TKB của **{len(list_gv)}** giáo viên.")
+    st.markdown("### 👨‍🏫 Thông tin Giáo viên")
 
-        st.markdown("---")
-        st.subheader("2. Dành cho Giáo viên")
+    row1_col1, row1_col2, row1_col3 = st.columns([1, 1, 1])
+    with row1_col1:
+        selected_teacher = st.selectbox("Chọn tên của bạn:", ["-- Chọn giáo viên --"] + list_gv)
+    with row1_col2:
+        chuc_vu = st.selectbox("Chức vụ:", ["Giáo viên", "Tổ trưởng chuyên môn", "Tổ phó chuyên môn", "Hiệu trưởng",
+                                            "Phó hiệu trưởng"])
+    with row1_col3:
+        to_chuyen_mon = st.selectbox("Tổ Chuyên môn:", ["Khoa học Tự nhiên", "Khoa học Xã hội"])
 
-        row1_col1, row1_col2 = st.columns([1, 1])
-        with row1_col1:
-            selected_teacher = st.selectbox("👨‍🏫 Chọn tên của bạn:", ["-- Chọn giáo viên --"] + list_gv)
-        with row1_col2:
-            # Cho phép tải lên NHIỀU file (VD: file PPCT Toán, file PPCT GDĐP)
-            up_ppct = st.file_uploader("📊 Tải lên các file PPCT (Có thể chọn nhiều file)", type=["xlsx", "csv"],
-                                       accept_multiple_files=True)
+    st.markdown("### 📊 Nguồn dữ liệu của bạn")
+    up_ppct = st.file_uploader("Tải lên các file PPCT cá nhân (Có thể quét chọn nhiều file cùng lúc)",
+                               type=["xlsx", "csv"], accept_multiple_files=True)
 
-        st.markdown("**Cấu hình thời gian & Năm học:**")
-        time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
-        today_date = datetime.today().date()
-        default_start = today_date - timedelta(days=today_date.weekday())  # Mặc định đầu tuần Thứ 2
+    st.markdown("**Cấu hình thời gian & Năm học:**")
+    time_col1, time_col2, time_col3, time_col4, time_col5 = st.columns(5)
+    today_date = datetime.today().date()
+    default_start = today_date - timedelta(days=today_date.weekday())  # Mặc định đầu tuần Thứ 2
 
-        with time_col1:
-            nam_hoc = st.text_input("Năm học:", value="2025 - 2026")
-        with time_col2:
-            hoc_ky = st.selectbox("Học kỳ:", ["I", "II", "Hè"], index=1)
-        with time_col3:
-            selected_week = st.number_input("📅 Số Tuần:", min_value=1, value=1, step=1)
-        with time_col4:
-            start_date = st.date_input("🗓️ Từ ngày:", value=default_start, format="DD/MM/YYYY")
-        with time_col5:
-            end_date = st.date_input("🗓️ Đến ngày:", value=default_start + timedelta(days=5), format="DD/MM/YYYY")
+    with time_col1:
+        nam_hoc = st.text_input("Năm học:", value="2025 - 2026")
+    with time_col2:
+        hoc_ky = st.selectbox("Học kỳ:", ["I", "II", "Hè"], index=1)
+    with time_col3:
+        selected_week = st.number_input("📅 Số Tuần:", min_value=1, value=1, step=1)
+    with time_col4:
+        start_date = st.date_input("🗓️ Từ ngày:", value=default_start, format="DD/MM/YYYY")
+    with time_col5:
+        end_date = st.date_input("🗓️ Đến ngày:", value=default_start + timedelta(days=5), format="DD/MM/YYYY")
 
-        st.markdown("**Bổ sung thông tin kiêm nhiệm (Nếu có):**")
-        kn_col1, kn_col2, kn_col3, kn_col4 = st.columns(4)
-        with kn_col1:
-            loai_kiem_nhiem = st.text_input("📝 Kiêm nhiệm 1:", placeholder="VD: CNTT, Tổ trưởng...")
-        with kn_col2:
-            kiem_nhiem = st.number_input("⏱️ Số tiết KN 1:", min_value=0, value=0, step=1)
-        with kn_col3:
-            loai_kiem_nhiem_2 = st.text_input("📝 Kiêm nhiệm 2:", placeholder="VD: Công đoàn, Thư viện...")
-        with kn_col4:
-            kiem_nhiem_2 = st.number_input("⏱️ Số tiết KN 2:", min_value=0, value=0, step=1)
+    st.markdown("**Bổ sung thông tin kiêm nhiệm (Nếu có):**")
+    kn_col1, kn_col2, kn_col3, kn_col4 = st.columns(4)
+    with kn_col1:
+        loai_kiem_nhiem = st.text_input("📝 Kiêm nhiệm 1:", placeholder="VD: CNTT, Tổ trưởng...")
+    with kn_col2:
+        kiem_nhiem = st.number_input("⏱️ Số tiết KN 1:", min_value=0, value=0, step=1)
+    with kn_col3:
+        loai_kiem_nhiem_2 = st.text_input("📝 Kiêm nhiệm 2:", placeholder="VD: Công đoàn, Thư viện...")
+    with kn_col4:
+        kiem_nhiem_2 = st.number_input("⏱️ Số tiết KN 2:", min_value=0, value=0, step=1)
 
-        if selected_teacher != "-- Chọn giáo viên --" and up_ppct:
-            if ('report_data' not in st.session_state or
-                    st.session_state.get('current_teacher') != selected_teacher or
-                    st.session_state.get('current_week') != selected_week):
-                st.session_state.report_data = []
-                st.session_state.current_teacher = selected_teacher
-                st.session_state.current_week = selected_week
-                st.session_state.df_ppct = None
+    if selected_teacher != "-- Chọn giáo viên --" and up_ppct:
+        if ('report_data' not in st.session_state or
+                st.session_state.get('current_teacher') != selected_teacher or
+                st.session_state.get('current_week') != selected_week):
+            st.session_state.report_data = []
+            st.session_state.current_teacher = selected_teacher
+            st.session_state.current_week = selected_week
+            st.session_state.df_ppct = None
 
-            if st.button("🚀 TẠO BÁO CÁO THEO TUẦN", use_container_width=True, type="primary"):
-                # Xử lý tất cả các file PPCT được up lên và gộp chung lại
-                all_dfs = []
-                has_error = False
+        if st.button("🚀 TẠO BÁO CÁO THEO TUẦN", use_container_width=True, type="primary"):
+            # Xử lý tất cả các file PPCT được up lên và gộp chung lại
+            all_dfs = []
+            has_error = False
 
-                for f in up_ppct:
-                    if f.name.endswith('.csv'):
-                        df_raw = pd.read_csv(f)
-                    else:
-                        df_raw = pd.read_excel(f)
-
-                    df_clean = clean_ppct_dataframe(df_raw)
-
-                    c_tiet = next((c for c in df_clean.columns if 'tiết' in str(c).lower()), None)
-                    c_bai = next(
-                        (c for c in df_clean.columns if 'bài' in str(c).lower() or 'nội dung' in str(c).lower()), None)
-                    c_lop = next((c for c in df_clean.columns if 'lớp' in str(c).lower() or 'khối' in str(c).lower()),
-                                 None)
-                    c_mon = next((c for c in df_clean.columns if 'môn' in str(c).lower()), None)
-                    c_tuan = next((c for c in df_clean.columns if 'tuần' in str(c).lower()), None)
-
-                    if not c_tiet or not c_bai or not c_tuan:
-                        st.error(f"❌ File '{f.name}' thiếu cột Tiết, Tên bài hoặc Tuần. Bỏ qua file này.")
-                        has_error = True
-                        continue
-
-                    # Chuẩn hóa dữ liệu để gộp an toàn
-                    temp_df = pd.DataFrame()
-                    temp_df['Tiết PPCT'] = pd.to_numeric(df_clean[c_tiet], errors='coerce')
-                    temp_df['Tên bài'] = df_clean[c_bai]
-                    temp_df['Tuần_Clean'] = pd.to_numeric(df_clean[c_tuan].astype(str).str.extract(r'(\d+)')[0],
-                                                          errors='coerce')
-
-                    if c_lop:
-                        temp_df['Khối_Clean'] = df_clean[c_lop].astype(str).str.extract(r'(\d+)')
-                    else:
-                        temp_df['Khối_Clean'] = ""
-
-                    if c_mon:
-                        temp_df['Môn_Clean'] = df_clean[c_mon].astype(str).str.lower().str.strip()
-                    else:
-                        # Mẹo: Dùng tên file làm môn học nếu file không có cột Môn (VD: "Báo giảng GDĐP.csv" -> "gdđp")
-                        inferred_mon = f.name.split('.')[0].lower().replace('báo giảng', '').strip()
-                        temp_df['Môn_Clean'] = inferred_mon
-
-                    all_dfs.append(temp_df)
-
-                if not all_dfs:
-                    st.error("❌ Không có file PPCT nào hợp lệ để xử lý!")
+            for f in up_ppct:
+                if f.name.endswith('.csv'):
+                    df_raw = pd.read_csv(f)
                 else:
-                    df_ppct = pd.concat(all_dfs, ignore_index=True)
-                    st.session_state.df_ppct = df_ppct
+                    df_raw = pd.read_excel(f)
 
-                    teacher_lessons = teachers_dict[selected_teacher]
+                df_clean = clean_ppct_dataframe(df_raw)
 
+                c_tiet = next((c for c in df_clean.columns if 'tiết' in str(c).lower()), None)
+                c_bai = next((c for c in df_clean.columns if 'bài' in str(c).lower() or 'nội dung' in str(c).lower()),
+                             None)
+                c_lop = next((c for c in df_clean.columns if 'lớp' in str(c).lower() or 'khối' in str(c).lower()), None)
+                c_mon = next((c for c in df_clean.columns if 'môn' in str(c).lower()), None)
+                c_tuan = next((c for c in df_clean.columns if 'tuần' in str(c).lower()), None)
+
+                if not c_tiet or not c_bai or not c_tuan:
+                    st.error(f"❌ File '{f.name}' thiếu cột Tiết, Tên bài hoặc Tuần. Bỏ qua file này.")
+                    has_error = True
+                    continue
+
+                # Chuẩn hóa dữ liệu để gộp an toàn
+                temp_df = pd.DataFrame()
+                temp_df['Tiết PPCT'] = pd.to_numeric(df_clean[c_tiet], errors='coerce')
+                temp_df['Tên bài'] = df_clean[c_bai]
+                temp_df['Tuần_Clean'] = pd.to_numeric(df_clean[c_tuan].astype(str).str.extract(r'(\d+)')[0],
+                                                      errors='coerce')
+
+                if c_lop:
+                    temp_df['Khối_Clean'] = df_clean[c_lop].astype(str).str.extract(r'(\d+)')
+                else:
+                    temp_df['Khối_Clean'] = ""
+
+                if c_mon:
+                    temp_df['Môn_Clean'] = df_clean[c_mon].astype(str).str.lower().str.strip()
+                else:
+                    # Mẹo: Dùng tên file làm môn học nếu file không có cột Môn (VD: "Báo giảng GDĐP.csv" -> "gdđp")
+                    inferred_mon = f.name.split('.')[0].lower().replace('báo giảng', '').strip()
+                    temp_df['Môn_Clean'] = inferred_mon
+
+                all_dfs.append(temp_df)
+
+            if not all_dfs:
+                st.error("❌ Không có file PPCT nào hợp lệ để xử lý!")
+            else:
+                df_ppct = pd.concat(all_dfs, ignore_index=True)
+                st.session_state.df_ppct = df_ppct
+
+                teacher_lessons = teachers_dict[selected_teacher]
+
+                day_map = {'Thứ 2': 2, 'Thứ 3': 3, 'Thứ 4': 4, 'Thứ 5': 5, 'Thứ 6': 6, 'Thứ 7': 7, 'Chủ Nhật': 8}
+                buoi_map = {'Sáng': 1, 'Chiều': 2}
+                teacher_lessons.sort(key=lambda x: (day_map.get(x['Thứ'], 9), buoi_map.get(x['Buổi'], 3), x['Tiết']))
+
+                final_report_data = []
+                occurrence_tracker = {}
+
+                for ls in teacher_lessons:
+                    lop_tkb = str(ls['Lớp'])
+                    mon = str(ls['Môn'])
+
+                    match_khoi = re.search(r'\d+', lop_tkb)
+                    khoi = match_khoi.group() if match_khoi else lop_tkb
+                    mon_tkb_clean = mon.lower().strip()
+
+                    key_occurrence = f"{lop_tkb}_{mon_tkb_clean}"
+                    occurrence_tracker[key_occurrence] = occurrence_tracker.get(key_occurrence, 0) + 1
+                    current_idx = occurrence_tracker[key_occurrence] - 1
+
+                    query = (df_ppct['Tuần_Clean'] == selected_week)
+
+                    # Sử dụng bộ lọc đã được tối ưu
+                    mask_khoi = (df_ppct['Khối_Clean'] == khoi) | (df_ppct['Khối_Clean'] == "") | df_ppct[
+                        'Khối_Clean'].isna()
+                    query = query & mask_khoi
+
+                    mask_mon = df_ppct['Môn_Clean'].apply(
+                        lambda x: mon_tkb_clean in str(x) or str(x) in mon_tkb_clean or
+                                  (mon_tkb_clean == 'tin' and str(x) == 'tin học') or
+                                  (mon_tkb_clean == 'tin học' and str(x) == 'tin')
+                    )
+                    query = query & mask_mon
+
+                    match_df = df_ppct[query].sort_values(by='Tiết PPCT')
+
+                    if current_idx < len(match_df):
+                        tiet_hien_tai = int(match_df.iloc[current_idx]['Tiết PPCT'])
+                        ten_bai = str(match_df.iloc[current_idx]['Tên bài']).strip()
+                    else:
+                        tiet_hien_tai = 0
+                        ten_bai = f"⚠️ Tuần {selected_week} PPCT chỉ có {len(match_df)} tiết cho khối này"
+
+                    final_report_data.append({
+                        "Thứ": ls['Thứ'], "Buổi": ls['Buổi'], "Tiết": ls['Tiết'],
+                        "Lớp": lop_tkb, "Môn": mon, "Tiết PPCT": tiet_hien_tai, "Tên Bài": ten_bai,
+                        "Khối": khoi,
+                        "Loại Tiết": "Thực dạy / Kiêm nhiệm"  # Mặc định
+                    })
+
+                st.session_state.report_data = final_report_data
+
+        if st.session_state.report_data:
+            st.markdown(f"### 📋 Xem trước Báo Cáo (Tuần {selected_week})")
+
+            # --- Thêm khu vực bổ sung tiết ngoài TKB ---
+            with st.expander("➕ Bổ sung tiết ngoài TKB (Dạy bù, dạy thay, bồi dưỡng...)", expanded=False):
+                st.write("Nhập thông tin tiết dạy bổ sung:")
+                c1, c2, c3, c4 = st.columns(4)
+                add_thu = c1.selectbox("Thứ", ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"])
+                add_buoi = c2.selectbox("Buổi", ["Sáng", "Chiều"])
+                add_tiet = c3.number_input("Tiết", min_value=1, max_value=15, value=1)
+                add_lop = c4.selectbox("Lớp", options=list_all_lops)
+
+                c5, c6, c7, c8 = st.columns(4)
+                add_mon = c5.selectbox("Môn", options=list_all_mons)
+                add_tiet_ppct = c6.number_input("Tiết PPCT (Thêm mới)", min_value=0, value=0)
+                add_loai_tiet = c7.selectbox("Loại Tiết (Thêm mới)", [
+                    "Thực dạy / Kiêm nhiệm",
+                    "Đi công tác",
+                    "Dạy thay",
+                    "Lấp giờ, tăng tiết, bù",
+                    "Coi KT, dự giờ, BD, PĐ"
+                ], index=3)  # Mặc định để mục Lấp giờ, tăng bù
+
+                # Tự động nhảy Tên bài dựa trên Tiết PPCT
+                auto_ten_bai = ""
+                if add_tiet_ppct > 0 and st.session_state.df_ppct is not None:
+                    match_khoi = re.search(r'\d+', add_lop)
+                    khoi = match_khoi.group() if match_khoi else add_lop
+                    mon_clean = str(add_mon).lower().strip()
+
+                    found_name = find_lesson_name(st.session_state.df_ppct, khoi, add_tiet_ppct, mon_clean)
+                    if "⚠️" not in found_name:
+                        auto_ten_bai = found_name
+
+                add_ten_bai = c8.text_input("Tên bài / Nội dung", value=auto_ten_bai, placeholder="VD: Ôn tập học kỳ")
+
+                if st.button("Thêm tiết này vào báo cáo"):
+                    match_khoi = re.search(r'\d+', add_lop)
+                    khoi = match_khoi.group() if match_khoi else add_lop
+
+                    st.session_state.report_data.append({
+                        "Thứ": add_thu,
+                        "Buổi": add_buoi,
+                        "Tiết": add_tiet,
+                        "Lớp": add_lop,
+                        "Môn": add_mon,
+                        "Tiết PPCT": int(add_tiet_ppct),
+                        "Tên Bài": add_ten_bai if add_ten_bai else auto_ten_bai,
+                        "Khối": khoi,
+                        "Loại Tiết": add_loai_tiet
+                    })
+
+                    # Sắp xếp lại danh sách tự động theo thứ, buổi, tiết để dễ xem và hỗ trợ Gộp Ô (Merge cell)
                     day_map = {'Thứ 2': 2, 'Thứ 3': 3, 'Thứ 4': 4, 'Thứ 5': 5, 'Thứ 6': 6, 'Thứ 7': 7, 'Chủ Nhật': 8}
                     buoi_map = {'Sáng': 1, 'Chiều': 2}
-                    teacher_lessons.sort(
-                        key=lambda x: (day_map.get(x['Thứ'], 9), buoi_map.get(x['Buổi'], 3), x['Tiết']))
+                    st.session_state.report_data.sort(key=lambda x: (
+                        day_map.get(x['Thứ'], 9),
+                        buoi_map.get(x['Buổi'], 3),
+                        int(x['Tiết']) if str(x['Tiết']).isdigit() else 99
+                    ))
 
-                    final_report_data = []
-                    occurrence_tracker = {}
-
-                    for ls in teacher_lessons:
-                        lop_tkb = str(ls['Lớp'])
-                        mon = str(ls['Môn'])
-
-                        match_khoi = re.search(r'\d+', lop_tkb)
-                        khoi = match_khoi.group() if match_khoi else lop_tkb
-                        mon_tkb_clean = mon.lower().strip()
-
-                        key_occurrence = f"{lop_tkb}_{mon_tkb_clean}"
-                        occurrence_tracker[key_occurrence] = occurrence_tracker.get(key_occurrence, 0) + 1
-                        current_idx = occurrence_tracker[key_occurrence] - 1
-
-                        query = (df_ppct['Tuần_Clean'] == selected_week)
-
-                        # Sử dụng bộ lọc đã được tối ưu
-                        mask_khoi = (df_ppct['Khối_Clean'] == khoi) | (df_ppct['Khối_Clean'] == "") | df_ppct[
-                            'Khối_Clean'].isna()
-                        query = query & mask_khoi
-
-                        mask_mon = df_ppct['Môn_Clean'].apply(
-                            lambda x: mon_tkb_clean in str(x) or str(x) in mon_tkb_clean or
-                                      (mon_tkb_clean == 'tin' and str(x) == 'tin học') or
-                                      (mon_tkb_clean == 'tin học' and str(x) == 'tin')
-                        )
-                        query = query & mask_mon
-
-                        match_df = df_ppct[query].sort_values(by='Tiết PPCT')
-
-                        if current_idx < len(match_df):
-                            tiet_hien_tai = int(match_df.iloc[current_idx]['Tiết PPCT'])
-                            ten_bai = str(match_df.iloc[current_idx]['Tên bài']).strip()
-                        else:
-                            tiet_hien_tai = 0
-                            ten_bai = f"⚠️ Tuần {selected_week} PPCT chỉ có {len(match_df)} tiết cho khối này"
-
-                        final_report_data.append({
-                            "Thứ": ls['Thứ'], "Buổi": ls['Buổi'], "Tiết": ls['Tiết'],
-                            "Lớp": lop_tkb, "Môn": mon, "Tiết PPCT": tiet_hien_tai, "Tên Bài": ten_bai,
-                            "Khối": khoi,
-                            "Loại Tiết": "Thực dạy / Kiêm nhiệm"  # Mặc định
-                        })
-
-                    st.session_state.report_data = final_report_data
-
-            if st.session_state.report_data:
-                st.markdown(f"### 📋 Xem trước Báo Cáo (Tuần {selected_week})")
-
-                # --- Thêm khu vực bổ sung tiết ngoài TKB ---
-                with st.expander("➕ Bổ sung tiết ngoài TKB (Dạy bù, dạy thay, bồi dưỡng...)", expanded=False):
-                    st.write("Nhập thông tin tiết dạy bổ sung:")
-                    c1, c2, c3, c4 = st.columns(4)
-                    add_thu = c1.selectbox("Thứ", ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ Nhật"])
-                    add_buoi = c2.selectbox("Buổi", ["Sáng", "Chiều"])
-                    add_tiet = c3.number_input("Tiết", min_value=1, max_value=15, value=1)
-                    add_lop = c4.selectbox("Lớp", options=list_all_lops)
-
-                    c5, c6, c7, c8 = st.columns(4)
-                    add_mon = c5.selectbox("Môn", options=list_all_mons)
-                    add_tiet_ppct = c6.number_input("Tiết PPCT (Thêm mới)", min_value=0, value=0)
-                    add_loai_tiet = c7.selectbox("Loại Tiết (Thêm mới)", [
-                        "Thực dạy / Kiêm nhiệm",
-                        "Đi công tác",
-                        "Dạy thay",
-                        "Lấp giờ, tăng tiết, bù",
-                        "Coi KT, dự giờ, BD, PĐ"
-                    ], index=3)  # Mặc định để mục Lấp giờ, tăng bù
-
-                    # Tự động nhảy Tên bài dựa trên Tiết PPCT
-                    auto_ten_bai = ""
-                    if add_tiet_ppct > 0 and st.session_state.df_ppct is not None:
-                        match_khoi = re.search(r'\d+', add_lop)
-                        khoi = match_khoi.group() if match_khoi else add_lop
-                        mon_clean = str(add_mon).lower().strip()
-
-                        found_name = find_lesson_name(st.session_state.df_ppct, khoi, add_tiet_ppct, mon_clean)
-                        if "⚠️" not in found_name:
-                            auto_ten_bai = found_name
-
-                    add_ten_bai = c8.text_input("Tên bài / Nội dung", value=auto_ten_bai,
-                                                placeholder="VD: Ôn tập học kỳ")
-
-                    if st.button("Thêm tiết này vào báo cáo"):
-                        match_khoi = re.search(r'\d+', add_lop)
-                        khoi = match_khoi.group() if match_khoi else add_lop
-
-                        st.session_state.report_data.append({
-                            "Thứ": add_thu,
-                            "Buổi": add_buoi,
-                            "Tiết": add_tiet,
-                            "Lớp": add_lop,
-                            "Môn": add_mon,
-                            "Tiết PPCT": int(add_tiet_ppct),
-                            "Tên Bài": add_ten_bai if add_ten_bai else auto_ten_bai,
-                            "Khối": khoi,
-                            "Loại Tiết": add_loai_tiet
-                        })
-
-                        # Sắp xếp lại danh sách tự động theo thứ, buổi, tiết để dễ xem và hỗ trợ Gộp Ô (Merge cell)
-                        day_map = {'Thứ 2': 2, 'Thứ 3': 3, 'Thứ 4': 4, 'Thứ 5': 5, 'Thứ 6': 6, 'Thứ 7': 7,
-                                   'Chủ Nhật': 8}
-                        buoi_map = {'Sáng': 1, 'Chiều': 2}
-                        st.session_state.report_data.sort(key=lambda x: (
-                            day_map.get(x['Thứ'], 9),
-                            buoi_map.get(x['Buổi'], 3),
-                            int(x['Tiết']) if str(x['Tiết']).isdigit() else 99
-                        ))
-
-                        st.rerun()
-
-                st.info(
-                    "💡 Bảng dưới đây đã được nâng cấp thành các **Menu xổ xuống**. Việc chọn Tiết PPCT và Loại tiết sẽ diễn ra cực kỳ nhanh chóng. Tên bài sẽ tự động nhảy theo ngay lập tức. Nhấn nút ❌ để xóa tiết dạy nghỉ lễ.")
-
-                st.markdown("---")
-                header_cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
-                header_cols[0].markdown("**Lớp - Môn (Thời gian)**")
-                header_cols[1].markdown("**Tiết PPCT**")
-                header_cols[2].markdown("**Tên Bài / Nội dung**")
-                header_cols[3].markdown("**Loại Tiết**")
-                header_cols[4].markdown("**Xóa**")
-
-                idx_to_remove = None
-                for i, row in enumerate(st.session_state.report_data):
-                    cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
-
-                    # Cột 1: Thông tin tĩnh
-                    thu_buoi = f"{row['Thứ']}, {row['Buổi']} (T{row['Tiết']})"
-                    cols[0].markdown(
-                        f"<div style='padding-top: 5px; font-size: 14px;'><b>{row['Lớp']} - {row['Môn']}</b><br/><span style='color: gray;'>{thu_buoi}</span></div>",
-                        unsafe_allow_html=True)
-
-                    # Cột 2: Tiết PPCT (Menu xổ xuống)
-                    tiet_options = list(range(0, 151))  # Hỗ trợ tối đa 150 tiết/năm
-                    try:
-                        current_tiet = int(row['Tiết PPCT'])
-                    except:
-                        current_tiet = 0
-
-                    if current_tiet not in tiet_options:
-                        tiet_options.append(current_tiet)
-                        tiet_options.sort()
-
-                    new_tiet = cols[1].selectbox("Tiết PPCT", options=tiet_options,
-                                                 index=tiet_options.index(current_tiet), key=f"tiet_{i}",
-                                                 label_visibility="collapsed")
-
-                    # Cập nhật Tên Bài ngay nếu Tiết PPCT thay đổi
-                    display_bai = str(row['Tên Bài'])
-                    if new_tiet != current_tiet:
-                        st.session_state.report_data[i]['Tiết PPCT'] = new_tiet
-                        khoi = row['Khối']
-                        mon_clean = str(row['Môn']).lower().strip()
-
-                        display_bai = find_lesson_name(st.session_state.df_ppct, khoi, new_tiet, mon_clean)
-                        st.session_state.report_data[i]['Tên Bài'] = display_bai
-
-                    # Cột 3: Tên bài (Cho phép gõ chữ nếu muốn tự sửa tay)
-                    new_bai = cols[2].text_input("Tên Bài", value=display_bai, key=f"bai_{i}",
-                                                 label_visibility="collapsed")
-                    if new_bai != display_bai:
-                        st.session_state.report_data[i]['Tên Bài'] = new_bai
-
-                    # Cột 4: Loại Tiết
-                    loai_options = [
-                        "Thực dạy / Kiêm nhiệm",
-                        "Đi công tác",
-                        "Dạy thay",
-                        "Lấp giờ, tăng tiết, bù",
-                        "Coi KT, dự giờ, BD, PĐ"
-                    ]
-                    current_loai = row.get('Loại Tiết', "Thực dạy / Kiêm nhiệm")
-                    loai_idx = loai_options.index(current_loai) if current_loai in loai_options else 0
-                    new_loai = cols[3].selectbox("Loại Tiết", options=loai_options, index=loai_idx, key=f"loai_{i}",
-                                                 label_visibility="collapsed")
-
-                    if new_loai != current_loai:
-                        st.session_state.report_data[i]['Loại Tiết'] = new_loai
-
-                    # Cột 5: Nút xóa
-                    if cols[4].button("❌", key=f"del_{i}", help="Xóa tiết này"):
-                        idx_to_remove = i
-
-                # Thực hiện xóa nếu có tiết được chọn
-                if idx_to_remove is not None:
-                    st.session_state.report_data.pop(idx_to_remove)
                     st.rerun()
 
-                missing_ppct = any("⚠️" in str(row["Tên Bài"]) for row in st.session_state.report_data)
-                if missing_ppct:
-                    st.warning(
-                        "⚠️ Vẫn còn một số tiết bị báo lỗi ⚠️. Có thể PPCT tuần này thiếu bài, hãy sửa lại Tiết PPCT ở bảng trên.")
+            st.info(
+                "💡 Bảng dưới đây đã được nâng cấp thành các **Menu xổ xuống**. Việc chọn Tiết PPCT và Loại tiết sẽ diễn ra cực kỳ nhanh chóng. Tên bài sẽ tự động nhảy theo ngay lập tức. Nhấn nút ❌ để xóa tiết dạy nghỉ lễ.")
 
-                output_file = create_excel_report(selected_teacher, nam_hoc, hoc_ky, selected_week, start_date,
-                                                  end_date, loai_kiem_nhiem, kiem_nhiem, loai_kiem_nhiem_2,
-                                                  kiem_nhiem_2, st.session_state.report_data)
+            st.markdown("---")
+            header_cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
+            header_cols[0].markdown("**Lớp - Môn (Thời gian)**")
+            header_cols[1].markdown("**Tiết PPCT**")
+            header_cols[2].markdown("**Tên Bài / Nội dung**")
+            header_cols[3].markdown("**Loại Tiết**")
+            header_cols[4].markdown("**Xóa**")
 
-                with open(output_file, "rb") as f:
-                    st.download_button(
-                        label=f"📥 TẢI FILE BÁO CÁO TUẦN {selected_week}",
-                        data=f, file_name=output_file,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        type="primary"
-                    )
+            idx_to_remove = None
+            for i, row in enumerate(st.session_state.report_data):
+                cols = st.columns([2.5, 1.5, 4, 2.5, 0.5])
 
-                st.markdown(
-                    "<div style='text-align: center; margin-top: 15px; color: gray;'>@copyright Đỗ Đặng Toàn@</div>",
+                # Cột 1: Thông tin tĩnh
+                thu_buoi = f"{row['Thứ']}, {row['Buổi']} (T{row['Tiết']})"
+                cols[0].markdown(
+                    f"<div style='padding-top: 5px; font-size: 14px;'><b>{row['Lớp']} - {row['Môn']}</b><br/><span style='color: gray;'>{thu_buoi}</span></div>",
                     unsafe_allow_html=True)
 
-    except Exception as e:
-        st.error(f"❌ Có lỗi xảy ra trong quá trình đọc file: {e}")
+                # Cột 2: Tiết PPCT (Menu xổ xuống)
+                tiet_options = list(range(0, 151))  # Hỗ trợ tối đa 150 tiết/năm
+                try:
+                    current_tiet = int(row['Tiết PPCT'])
+                except:
+                    current_tiet = 0
+
+                if current_tiet not in tiet_options:
+                    tiet_options.append(current_tiet)
+                    tiet_options.sort()
+
+                new_tiet = cols[1].selectbox("Tiết PPCT", options=tiet_options, index=tiet_options.index(current_tiet),
+                                             key=f"tiet_{i}", label_visibility="collapsed")
+
+                # Cập nhật Tên Bài ngay nếu Tiết PPCT thay đổi
+                display_bai = str(row['Tên Bài'])
+                if new_tiet != current_tiet:
+                    st.session_state.report_data[i]['Tiết PPCT'] = new_tiet
+                    khoi = row['Khối']
+                    mon_clean = str(row['Môn']).lower().strip()
+
+                    display_bai = find_lesson_name(st.session_state.df_ppct, khoi, new_tiet, mon_clean)
+                    st.session_state.report_data[i]['Tên Bài'] = display_bai
+
+                # Cột 3: Tên bài (Cho phép gõ chữ nếu muốn tự sửa tay)
+                new_bai = cols[2].text_input("Tên Bài", value=display_bai, key=f"bai_{i}", label_visibility="collapsed")
+                if new_bai != display_bai:
+                    st.session_state.report_data[i]['Tên Bài'] = new_bai
+
+                # Cột 4: Loại Tiết
+                loai_options = [
+                    "Thực dạy / Kiêm nhiệm",
+                    "Đi công tác",
+                    "Dạy thay",
+                    "Lấp giờ, tăng tiết, bù",
+                    "Coi KT, dự giờ, BD, PĐ"
+                ]
+                current_loai = row.get('Loại Tiết', "Thực dạy / Kiêm nhiệm")
+                loai_idx = loai_options.index(current_loai) if current_loai in loai_options else 0
+                new_loai = cols[3].selectbox("Loại Tiết", options=loai_options, index=loai_idx, key=f"loai_{i}",
+                                             label_visibility="collapsed")
+
+                if new_loai != current_loai:
+                    st.session_state.report_data[i]['Loại Tiết'] = new_loai
+
+                # Cột 5: Nút xóa
+                if cols[4].button("❌", key=f"del_{i}", help="Xóa tiết này"):
+                    idx_to_remove = i
+
+            # Thực hiện xóa nếu có tiết được chọn
+            if idx_to_remove is not None:
+                st.session_state.report_data.pop(idx_to_remove)
+                st.rerun()
+
+            missing_ppct = any("⚠️" in str(row["Tên Bài"]) for row in st.session_state.report_data)
+            if missing_ppct:
+                st.warning(
+                    "⚠️ Vẫn còn một số tiết bị báo lỗi ⚠️. Có thể PPCT tuần này thiếu bài, hãy sửa lại Tiết PPCT ở bảng trên.")
+
+            output_file = create_excel_report(selected_teacher, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, selected_week,
+                                              start_date, end_date, loai_kiem_nhiem, kiem_nhiem, loai_kiem_nhiem_2,
+                                              kiem_nhiem_2, st.session_state.report_data)
+
+            with open(output_file, "rb") as f:
+                st.download_button(
+                    label=f"📥 TẢI FILE BÁO CÁO TUẦN {selected_week}",
+                    data=f, file_name=output_file,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="primary"
+                )
+
+            st.markdown(
+                "<div style='text-align: center; margin-top: 15px; color: gray;'>@copyright Đỗ Đặng Toàn@</div>",
+                unsafe_allow_html=True)
