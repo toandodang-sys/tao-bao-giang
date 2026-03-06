@@ -6,6 +6,34 @@ from openpyxl.worksheet.page import PageMargins
 import os
 import re
 from datetime import datetime, timedelta
+import json
+
+ADMIN_PASSWORD = "chipbeo06"
+LOG_FILE = "audit_log.json"
+
+
+def load_logs():
+    """Tải lịch sử tạo báo cáo"""
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+
+def save_log(teacher_name, week_num):
+    """Lưu vết ngầm khi giáo viên tạo báo cáo"""
+    logs = load_logs()
+    now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    logs.append({
+        "Thời gian": now,
+        "Giáo viên": teacher_name,
+        "Tuần báo cáo": week_num
+    })
+    with open(LOG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(logs, f, ensure_ascii=False, indent=4)
 
 
 # --- 1. LOGIC LÀM SẠCH FILE PPCT (Tránh lỗi dòng thừa) ---
@@ -607,6 +635,29 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
+
+# SIDEBAR: DÀNH CHO QUẢN TRỊ VIÊN (LƯU VẾT)
+with st.sidebar:
+    st.header("🛠️ Dành cho Quản trị")
+    admin_pwd = st.text_input("Nhập mật khẩu Quản trị:", type="password")
+
+    if admin_pwd == ADMIN_PASSWORD:
+        st.success("Đã mở khóa!")
+        st.markdown("### 🕵️ Nhật ký tạo báo cáo")
+        logs = load_logs()
+        if logs:
+            df_logs = pd.DataFrame(logs)
+            # In ra bảng và đảo ngược để nhật ký mới nhất nổi lên đầu
+            st.dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
+            if st.button("🗑️ Xóa nhật ký", use_container_width=True):
+                if os.path.exists(LOG_FILE):
+                    os.remove(LOG_FILE)
+                st.rerun()
+        else:
+            st.info("Chưa có giáo viên nào tạo báo cáo.")
+    elif admin_pwd != "":
+        st.error("Mật khẩu không chính xác!")
+
 st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
 
 # Tự động đọc TKB từ thư mục GitHub (Không cần Admin up)
@@ -785,6 +836,9 @@ else:
                     })
 
                 st.session_state.report_data = final_report_data
+
+                # QUAN TRỌNG: Lưu lại vết hoạt động ngầm
+                save_log(selected_teacher, selected_week)
 
                 # QUAN TRỌNG: Dọn dẹp key bộ nhớ giao diện cũ để ngăn lỗi Session State
                 for k in list(st.session_state.keys()):
