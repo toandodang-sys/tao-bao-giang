@@ -427,7 +427,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
         write_summary_row(sum_row, ten_kiem_nhiem_hien_thi_2, "H", kiem_nhiem_2, is_bold=True)
         sum_row += 1
 
-    write_summary_row(sum_row, "Số tiết thực dạy, kiêm nhiệm (1):", "H", counts[8] + total_kiem_nhiem)
+    write_summary_row(sum_row, "Cộng số tiết dạy, kiêm nhiệm (1):", "H", total_tiet)
     sum_row += 1
     write_summary_row(sum_row, "Số tiết đi công tác (2):", "H", counts[9])
     sum_row += 1
@@ -507,7 +507,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
         ws[f'J{r}'] = "tiết"
         ws[f'J{r}'].font = font_normal
 
-    write_to_row(row_duyet + 1, "- Số tiết dạy, kiêm nhiệm:", counts[8] + total_kiem_nhiem)
+    write_to_row(row_duyet + 1, "- Cộng số tiết dạy, kiêm nhiệm:", total_tiet)
     write_to_row(row_duyet + 2, "- Số tiết đi công tác:", counts[9])
     write_to_row(row_duyet + 3, "- Số tiết dạy thay:", counts[10])
     write_to_row(row_duyet + 4, "- Số tiết dạy lấp giờ, tăng tiết, bù:", counts[11])
@@ -557,7 +557,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
     ws[f'D{row_cm_truong}'] = "PHẦN DUYỆT CỦA CHUYÊN MÔN TRƯỜNG"
     ws[f'D{row_cm_truong}'].font = font_bold
 
-    write_to_row(row_cm_truong + 1, "- Số tiết dạy, kiêm nhiệm:", counts[8] + total_kiem_nhiem)
+    write_to_row(row_cm_truong + 1, "- Cộng số tiết dạy, kiêm nhiệm:", total_tiet)
     write_to_row(row_cm_truong + 2, "- Số tiết đi công tác:", counts[9])
     write_to_row(row_cm_truong + 3, "- Số tiết dạy thay:", counts[10])
     write_to_row(row_cm_truong + 4, "- Số tiết dạy lấp giờ, tăng tiết, bù:", counts[11])
@@ -607,7 +607,7 @@ def create_excel_report(teacher_name, chuc_vu, to_chuyen_mon, nam_hoc, hoc_ky, w
 
 # --- 5. GIAO DIỆN STREAMLIT WEB APP ---
 st.set_page_config(page_title="Hệ thống Báo Cáo Giáo Viên", layout="wide", page_icon="☀️")
-st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy Trường THCS Ba Tơ")
+st.title("☀️ Cổng Tự Động Hóa Báo Cáo Giảng Dạy")
 
 # Tự động đọc TKB từ thư mục GitHub (Không cần Admin up)
 teachers_dict = load_saved_tkb()
